@@ -1,0 +1,31 @@
+# Captured by Gojira's drift detector — the live cluster state.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        resources:
+          limits:
+            cpu: '1'
+            ephemeral-storage: 4Gi
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            ephemeral-storage: 4Gi
+            memory: 1Gi
+        readinessProbe:
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          httpGet:
+            path: /health/readiness
+            port: http
+        livenessProbe:
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          httpGet:
+            path: /health/readiness
+            port: http
