@@ -1,0 +1,21 @@
+# Models served to the stack. Names are what callers put in their config
+# (cabal's identity.toml, kobo's org.yaml); the proxy maps them to Vertex.
+# Credentials: Application Default Credentials — on GKE that is Workload
+# Identity (KSA `litellm` → a GSA with roles/aiplatform.user), nothing in env.
+model_list:
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      model: vertex_ai/gemini-2.5-flash
+      vertex_project: os.environ/VERTEX_PROJECT
+      vertex_location: os.environ/VERTEX_LOCATION
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: vertex_ai/gemini-2.5-pro
+      vertex_project: os.environ/VERTEX_PROJECT
+      vertex_location: os.environ/VERTEX_LOCATION
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: true   # callers send provider-specific params; don't 400 on them
