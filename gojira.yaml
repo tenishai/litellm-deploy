@@ -1,30 +1,23 @@
-# Gojira deploy contract (tenishai/gojira docs/design.md "gojira.yaml").
-# Gojira generates the Deployment, Service, workflow and overlays; k8s/base
-# holds the ServiceAccount it keeps as app-authored, and k8s/overlays/dev
-# the Workload Identity annotation for that environment.
+# Gojira app spec — this file is the contract between your repo and Gojira.
+# Change the class or add overrides here; Gojira regenerates the manifests
+# when this file changes.
 app: litellm
 class: web
 environments:
   - name: dev
     cluster: gojira-sandbox
     namespace: litellm
-port: 8080
-health: /health/readiness
-# Built on an arm64 runner and scheduled on arm64 nodes; Autopilot provides
-# those through its Scale-Out compute class.
-arch: arm64
-node_selector:
-  cloud.google.com/compute-class: Scale-Out
-# ADC → Workload Identity: the KSA carries the GSA annotation (overlay).
 service_account: litellm
+secrets_from: [litellm-secrets]
 env:
-  VERTEX_PROJECT: shaz-learning
-  VERTEX_LOCATION: us-central1
-# LITELLM_MASTER_KEY — created in the namespace out of band, never in git.
-secrets_from:
-  - litellm-secrets
+  VERTEX_LOCATION: "us-central1"
+  VERTEX_PROJECT: "shaz-learning"
+arch: arm64                  # image platform + node arch; amd64 otherwise
+node_selector:                # added to the pod verbatim (how this cluster provides arm64, a pool, …)
+  cloud.google.com/compute-class: "Scale-Out"
+health: /health/readiness
 overrides:
-  requests: { cpu: 250m, memory: 512Mi }
-  limits: { cpu: "1", memory: 1Gi }
+  requests: { cpu: "250m", memory: "512Mi" }
+  limits: { cpu: "1", memory: "1Gi" }
   hpa: { min: 1, max: 2 }
   justification: "a Python proxy with a loaded model map needs more than the web class's 256Mi; one replica serves the dogfood"
