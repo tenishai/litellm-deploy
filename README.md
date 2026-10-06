@@ -10,8 +10,9 @@ Deployed through [Gojira](https://github.com/tenishai/gojira) from
 `gojira.yaml`; the Service is `litellm.litellm.svc.cluster.local` (port 80).
 
 Out-of-band per environment: Secret `litellm-secrets` with
-`LITELLM_MASTER_KEY`; a GSA with `roles/aiplatform.user` bound to the
-KSA `litellm` (`k8s/overlays/<env>/patches/sa-workload-identity.yaml`).
+`LITELLM_MASTER_KEY`. The Google identity is the platform's: `gojira.yaml`
+`identity:` names the account and the role, and Gojira grants, binds and
+annotates.
 
 Call it:
 

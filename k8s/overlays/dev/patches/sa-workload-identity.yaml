@@ -1,8 +1,0 @@
-# Workload Identity: KSA litellm/litellm → the GSA with roles/aiplatform.user
-# in the dev project. The binding on the GSA side is made out of band.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: litellm
-  annotations:
-    iam.gke.io/gcp-service-account: litellm@shaz-learning.iam.gserviceaccount.com

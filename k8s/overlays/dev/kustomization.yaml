@@ -12,5 +12,3 @@ images:
   - name: gojira-app
     newName: us-central1-docker.pkg.dev/shaz-learning/apps/litellm
     newTag: latest
-patches:
-- path: patches/sa-workload-identity.yaml
