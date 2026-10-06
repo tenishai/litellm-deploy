@@ -8,18 +8,15 @@ environments:
     cluster: gojira-sandbox
     namespace: litellm
 service_account: litellm
-# ADC → Workload Identity. The platform owns the identity: it adopts the
-# account below, grants the role on each environment's project, binds the
-# pod's ServiceAccount to it and has CI annotate it — nothing hand-made,
-# nothing in an overlay.
-identity:
-  gsa: litellm@shaz-learning.iam.gserviceaccount.com
-  gcp_roles: [roles/aiplatform.user]
+identity:                     # the pod's GCP identity, made and granted by the platform
+  gsa: litellm@shaz-learning.iam.gserviceaccount.com   # adopted: granted and bound, never created or deleted
+  gcp_roles:                  # project roles the pod needs; each must be on the install's allowlist
+    - roles/aiplatform.user
 secrets_from: [litellm-secrets]
 env:
   VERTEX_LOCATION: "us-central1"
   VERTEX_PROJECT: "shaz-learning"
-arch: arm64                  # image platform + node arch; amd64 otherwise
+arch: arm64                  # image platform + node arch; unset: the platform's default
 node_selector:                # added to the pod verbatim (how this cluster provides arm64, a pool, …)
   cloud.google.com/compute-class: "Scale-Out"
 health: /health/readiness

@@ -16,8 +16,9 @@ permissions:
   id-token: write
 
 env:
-  IMAGE: us-central1-docker.pkg.dev/shaz-learning/apps/litellm
-  GOJIRA_CONTRACT: b0b02517d0c55ca5a68fb8db8b4a16e94f3e90a010cbadd3f68d4ac93d206cec
+  IMAGE: ${{ vars.GOJIRA_DEV_AR_REPO }}/litellm
+  RUN_SA: ${{ vars.GOJIRA_DEV_RUN_SA }}
+  GOJIRA_CONTRACT: 15576c44837775d51127ea21f9e9a0d7a5b1a7800ac31e53e4cc5a11402be2dc
 
 jobs:
   build-and-deploy-dev:
@@ -25,6 +26,28 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Platform variables for dev
+        # Gojira set these on the repository when it connected it (and sets
+        # them again on every Provision). Registry, deploy identity and
+        # cluster are the install's facts, so they live there and not here:
+        # this file is the same under any Gojira. Unset means this repo is
+        # not connected to the Gojira whose workflow is running.
+        env:
+          GOJIRA_DEV_AR_REPO: ${{ vars.GOJIRA_DEV_AR_REPO }}
+          GOJIRA_DEV_WIF_PROVIDER: ${{ vars.GOJIRA_DEV_WIF_PROVIDER }}
+          GOJIRA_DEV_DEPLOY_SA: ${{ vars.GOJIRA_DEV_DEPLOY_SA }}
+          GOJIRA_DEV_PROJECT: ${{ vars.GOJIRA_DEV_PROJECT }}
+          GOJIRA_DEV_LOCATION: ${{ vars.GOJIRA_DEV_LOCATION }}
+          GOJIRA_DEV_GKE_CLUSTER: ${{ vars.GOJIRA_DEV_GKE_CLUSTER }}
+          GOJIRA_DEV_RUN_SA: ${{ vars.GOJIRA_DEV_RUN_SA }}
+        run: |
+          for name in GOJIRA_DEV_AR_REPO GOJIRA_DEV_WIF_PROVIDER GOJIRA_DEV_DEPLOY_SA GOJIRA_DEV_PROJECT GOJIRA_DEV_LOCATION GOJIRA_DEV_GKE_CLUSTER GOJIRA_DEV_RUN_SA; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set on this repository — it is not connected to a Gojira that set it. Connect the repo there, or press Provision again."
+              exit 1
+            fi
+          done
 
       - name: Verify manifests match gojira.yaml
         # gojira.yaml and the manifests it implies can land in two commits
@@ -45,13 +68,13 @@ jobs:
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: projects/459294774357/locations/global/workloadIdentityPools/gojira/providers/github
-          service_account: litellm-deploy@shaz-learning.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.GOJIRA_DEV_WIF_PROVIDER }}
+          service_account: ${{ vars.GOJIRA_DEV_DEPLOY_SA }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure docker for Artifact Registry
-        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker "${IMAGE%%/*}" --quiet
 
       - name: Build and push image
         # AR_TOKEN lets a Dockerfile resolve private Artifact Registry package
@@ -64,9 +87,9 @@ jobs:
 
       - uses: google-github-actions/get-gke-credentials@v2
         with:
-          cluster_name: gojira-sandbox
-          location: us-central1
-          project_id: shaz-learning
+          cluster_name: ${{ vars.GOJIRA_DEV_GKE_CLUSTER }}
+          location: ${{ vars.GOJIRA_DEV_LOCATION }}
+          project_id: ${{ vars.GOJIRA_DEV_PROJECT }}
           # IAM-authenticated DNS endpoint: works for private control planes
           # (GitHub runners can't reach a private IP) and public ones alike.
           # The provisioner ensures DNS access is enabled on every registered
@@ -109,6 +132,13 @@ jobs:
             sleep 30
           done
           [ "$ok" = true ] || { echo "deploy failed after retries"; exit 1; }
+          # The pod's Google identity (gojira.yaml identity:). The email names
+          # a project, so it comes from this environment's variable, not from
+          # the manifest; apply never managed this annotation, so it keeps it.
+          # GKE resolves the mapping when a pod asks for a token, so pods
+          # started a moment before this line still get it.
+          kubectl -n litellm annotate serviceaccount litellm \
+            "iam.gke.io/gcp-service-account=$RUN_SA" --overwrite
           kubectl -n litellm rollout status deployment/litellm --timeout=600s
 
           # Phase 2 — reconcile the GMP Rules CR now the operator's webhook is up.
