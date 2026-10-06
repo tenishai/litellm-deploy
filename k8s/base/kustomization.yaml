@@ -9,4 +9,3 @@ resources:
   - rules.yaml
   - service.yaml
   # app-authored resources, preserved by Gojira:
-  - serviceaccount.yaml
