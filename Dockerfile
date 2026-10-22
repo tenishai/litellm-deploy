@@ -2,7 +2,11 @@
 # Vertex AI that cabal (identity.toml [litellm]) and the agents talk to.
 # Multi-arch upstream image (amd64 + arm64); the tag is the release that
 # `main-stable` pointed at when pinned — move it on purpose, not by rebuild.
-FROM ghcr.io/berriai/litellm:v1.103.2
+# Pinned by digest, not tag: the official litellm images carried a credential
+# stealer on 2026-10-21 (1.107.0), and a tag can be re-pushed while a digest
+# cannot. This is the v1.103.2 index (amd64 + arm64) as published. To move:
+#   docker buildx imagetools inspect ghcr.io/berriai/litellm:<tag>   # read the digest
+FROM ghcr.io/berriai/litellm:v1.103.2@sha256:f63fb81b831b170ec16851e23c36ac5bf52ef106b271406429524a2ed730bbfd
 
 COPY config.yaml /etc/litellm/config.yaml
 
