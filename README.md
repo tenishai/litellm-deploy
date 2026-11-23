@@ -21,3 +21,9 @@ curl -s http://litellm/v1/chat/completions -H "Authorization: Bearer $LITELLM_MA
   -H 'content-type: application/json' \
   -d '{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hello"}]}'
 ```
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 tenish and the litellm contributors. The
+LiteLLM proxy itself is BerriAI's, under its own MIT licence; see
+[NOTICE](NOTICE).
