@@ -1,0 +1,52 @@
+# Pull-request checks for a Gojira-managed deploy repo (agora discussion 71,
+# rule 4). The generated workflow (gojira-ci.yaml) runs on push to main and
+# deploys; nothing checked a change before it got there. This builds every
+# overlay and runs Gojira's contract check on the pull request, on a
+# GitHub-hosted runner. Hand-written: Gojira regenerates only the files it
+# names, so this one survives a Provision.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Every overlay builds
+        run: |
+          set -euo pipefail
+          for overlay in k8s/overlays/*/; do
+            echo "kustomize build $overlay"
+            kubectl kustomize "$overlay" > /dev/null
+          done
+
+      - name: Manifests match gojira.yaml
+        # The same check the generated workflow runs before a deploy: the
+        # manifests carry the fingerprint of the gojira.yaml they were rendered
+        # from (GOJIRA_CONTRACT, the canonical hash gojira.generator.
+        # contract_fingerprint computes). A pull request that edits gojira.yaml
+        # without Gojira's regenerated manifests fails here, not after a merge.
+        run: |
+          set -euo pipefail
+          expected=$(sed -nE 's/^[[:space:]]*GOJIRA_CONTRACT:[[:space:]]*([0-9a-f]{64}).*/\1/p' .github/workflows/gojira-ci.yaml | head -1)
+          [ -n "$expected" ] || { echo "::error::no GOJIRA_CONTRACT in .github/workflows/gojira-ci.yaml"; exit 1; }
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install -q pyyaml
+          actual=$(python3 -c 'import hashlib, json, yaml; doc = yaml.safe_load(open("gojira.yaml")); print(hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest())')
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::gojira.yaml changed (contract $actual) but k8s/ and the workflows were rendered from $expected. Let Gojira regenerate them (Provision again) and merge its setup PR with this change."
+            exit 1
+          fi
+          echo "contract $actual matches the rendered manifests"
+
+  ci:
+    # The summary the ruleset requires: reports even when a job fails, and
+    # fails unless every needed result is "success".
+    needs: [manifests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ join(needs.*.result, ',') }}" = "success"
