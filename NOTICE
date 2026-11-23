@@ -1,0 +1,14 @@
+litellm (the tenish stack's LiteLLM proxy deployment)
+Copyright (c) 2026 tenish and the litellm contributors
+
+This product includes software developed by tenish and the litellm contributors
+(https://github.com/tenishai/litellm): a proxy configuration, a Dockerfile and
+Kubernetes manifests. It is licensed under the MIT License. See the LICENSE file.
+
+Third-party notices
+
+The container image this repository builds is the LiteLLM proxy published by
+BerriAI (https://github.com/BerriAI/litellm), with this repository's
+configuration file copied in. LiteLLM is not part of this repository and its
+licence terms are its own: MIT, except its "litellm/enterprise/" directory,
+which BerriAI licenses separately. See their LICENSE file.

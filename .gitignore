@@ -1,2 +1,8 @@
+# secrets and an operator's files never go in git
 .env
+*.env
 *.pem
+*-token
+# agent session notes never go in git either
+CLAUDE.local.md
+scratch*
