@@ -22,6 +22,12 @@ curl -s http://litellm/v1/chat/completions -H "Authorization: Bearer $LITELLM_MA
   -d '{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hello"}]}'
 ```
 
+## The published image
+
+Every `vX.Y.Z` tag publishes `ghcr.io/tenishai/litellm-deploy:vX.Y.Z` (amd64 and arm64,
+digest in the release notes). An install that deploys from published images names that
+in its stack file; the section below is for a Gojira that builds this repo itself.
+
 ## Deploying it
 
 This repo is deployed by a [Gojira](https://github.com/tenishai/gojira) install;
