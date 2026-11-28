@@ -6,6 +6,10 @@ image (`.github/workflows/release.yaml`); the dogfood deploys what `main` says.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.0] — 2026-11-28
+
 ### Added
 
 - **A release publishes the image.** Pushing a `vX.Y.Z` tag runs `ci.yaml` on the tagged
