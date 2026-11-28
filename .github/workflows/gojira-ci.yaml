@@ -22,8 +22,8 @@ env:
 
 jobs:
   build-and-deploy-dev:
-    # A repo or org variable CI_RUNNER names a self-hosted runner label; unset, GitHub's.
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # A public repository: GitHub's hosted runners, whatever the install names.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -58,7 +58,12 @@ jobs:
         # these manifests were rendered from — same canonical hash as
         # gojira.generator.contract_fingerprint. Fail here, before a build.
         run: |
-          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install -q pyyaml
+          # A bare self-hosted runner (GitHub's actions-runner image) has python3
+          # without pip; its sudo is passwordless, so the distro package does.
+          python3 -c 'import yaml' 2>/dev/null \
+            || python3 -m pip install -q pyyaml 2>/dev/null \
+            || { sudo apt-get -qq update && sudo apt-get -qq install -y python3-yaml >/dev/null; } \
+            || { echo "::error::this runner has no python3 with PyYAML and none could be installed"; exit 1; }
           actual=$(python3 -c 'import hashlib, json, yaml; doc = yaml.safe_load(open("gojira.yaml")); print(hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest())')
           if [ "$actual" != "$GOJIRA_CONTRACT" ]; then
             echo "::error::k8s/ and workflows are stale for this gojira.yaml (contract $actual, manifests rendered from $GOJIRA_CONTRACT). Merge Gojira's setup PR, or press Provision again, then redeploy."
@@ -73,6 +78,29 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f  # v2.2.1
 
+      - name: Tools the runner may lack
+        # GitHub's hosted runners carry all of these. A self-hosted runner
+        # needs docker (for apps built from their repo) and nothing else:
+        # what is missing is fetched here, pinned. kubectl comes from the
+        # gcloud setup-gcloud just installed; kustomize is not a gcloud
+        # component, so its release tarball is fetched and checked against
+        # the sha256 kustomize publishes. The GKE auth plugin is not needed:
+        # get-gke-credentials writes the auth step's token into kubeconfig.
+        run: |
+          command -v kubectl >/dev/null || gcloud components install kubectl --quiet
+          if ! command -v kustomize >/dev/null; then
+            case "$(uname -m)" in
+              x86_64) arch=amd64; sum=cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61 ;;
+              aarch64|arm64) arch=arm64; sum=9867b76482cfc6d25b546abc1d2b5a32bd137505aba640649b4b378f64f6d68f ;;
+              *) echo "::error::no kustomize build for $(uname -m)"; exit 1 ;;
+            esac
+            curl -fsSLo kustomize.tgz "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.8.3/kustomize_v5.8.3_linux_${arch}.tar.gz"
+            echo "$sum  kustomize.tgz" | sha256sum -c - >/dev/null
+            tar -xzf kustomize.tgz kustomize && rm kustomize.tgz
+            mkdir -p "$HOME/.local/bin" && mv kustomize "$HOME/.local/bin/kustomize"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
       - name: Configure docker for Artifact Registry
         run: gcloud auth configure-docker "${IMAGE%%/*}" --quiet
 
@@ -85,10 +113,38 @@ jobs:
           DOCKER_BUILDKIT: "1"
         run: |
           TAG="${GITHUB_SHA::12}"
+          # Skip the build only when the image cannot depend on the commit. A Dockerfile
+          # that reads nothing from the build context (no COPY, no ADD, no bind mount: a
+          # runtime pinned by digest, tenishai/kobo#434) builds the same bytes for every
+          # push, so a push that changes settings or other files must not spend minutes
+          # rebuilding them. The registry keeps each such build under a second tag,
+          # build-<sha of the Dockerfile blob>; when that tag exists the commit's tag is
+          # added to the same digest and the build is skipped. A Dockerfile that reads
+          # the context is a function of the commit and always builds, as before. The
+          # Redeploy button (workflow_dispatch) always builds too: a mutable base tag in
+          # FROM is refreshed only by a Dockerfile change or that button.
+          BUILD_KEY=""
+          if ! grep -qiE '^[[:space:]]*(COPY|ADD)[[:space:]]|--mount=type=bind' Dockerfile; then
+            BUILD_KEY="build-$(git rev-parse "HEAD:Dockerfile" | cut -c1-12)"
+          fi
+          EXISTING=""
+          if [ -n "$BUILD_KEY" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            # --filter on a tag is a prefix match (finding #47): take one exact row.
+            EXISTING=$(gcloud artifacts docker tags list "$IMAGE" --filter="tag:$BUILD_KEY" --format='value(tag,version)' 2>/dev/null \
+              | awk -v k="$BUILD_KEY" '{ n = split($1, t, "/"); if (t[n] == k) { print $2; exit } }' || true)
+          fi
+          if [ -n "$EXISTING" ]; then
+            echo "image for this Dockerfile already built ($BUILD_KEY -> $EXISTING); tagging it $TAG, no build"
+            gcloud artifacts docker tags add "$IMAGE@$EXISTING" "$IMAGE:$TAG" --quiet
+            exit 0
+          fi
           AR_TOKEN="$(gcloud auth print-access-token)"
           export AR_TOKEN
           docker build --platform linux/arm64 --secret id=ar_token,env=AR_TOKEN -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
+          if [ -n "$BUILD_KEY" ]; then
+            gcloud artifacts docker tags add "$IMAGE:$TAG" "$IMAGE:$BUILD_KEY" --quiet
+          fi
 
       - uses: google-github-actions/get-gke-credentials@64bc7249bbcf78056bb92f14d3cedc2da193946c  # v2.3.5
         with:
