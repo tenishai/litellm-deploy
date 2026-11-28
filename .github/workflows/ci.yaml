@@ -9,6 +9,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # release.yaml runs this whole file on the tagged commit before it builds anything.
+  workflow_call:
 
 jobs:
   manifests:

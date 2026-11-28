@@ -1,0 +1,182 @@
+# The release image: what a pushed vX.Y.Z tag turns into. Nothing else publishes an
+# image (agora issue 58); the generated gojira-ci.yaml builds this same Dockerfile for
+# the dogfood's own registry and is unchanged. Modelled on tenishai/cabal's release.yml
+# with the Python parts left out: this repo is a Dockerfile and a config file over the
+# upstream litellm image, pinned by digest. In order, each step gating the next:
+#
+#   1. the whole of ci.yaml on the tagged commit (every overlay builds, the manifests
+#      match gojira.yaml)
+#   2. the tag is vX.Y.Z (there is no pyproject to agree with; the tag is the version)
+#   3. the image, built for this machine: `litellm --version` answers, the config is
+#      where the CMD reads it, and no high or critical vulnerability has a fix
+#   4. the multi-arch image, published to ghcr under the tag and the short commit sha,
+#      with an SBOM and build provenance attached
+#   5. the GitHub release: created from CHANGELOG.md if it does not exist yet, with the
+#      SBOM and its checksum as files and the image digest in the text
+#
+# An installer that deploys the stack from published images (tenishai/stack, `image:`)
+# pulls ghcr.io/tenishai/litellm-deploy:vX.Y.Z; nobody needs to build this repo.
+#
+# To build a tag again, run this workflow from that tag (the tag must contain this file):
+#   gh workflow run release.yaml --ref vX.Y.Z
+# If that tag's image is already on ghcr, the run does not build or push it again: a
+# rebuild gets a new digest, and nodes with `imagePullPolicy: IfNotPresent` would run
+# different images under one tag. It checks, scans (reporting, not failing) and makes the
+# SBOM of the published image instead, and finishes the GitHub release with its digest.
+#
+# A dry run, from a branch, does steps 1 and 3, makes the SBOM and checksums, runs the
+# existence check against `dry-run`, and publishes nothing:
+#   gh workflow run release.yaml --ref main
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref_name }}
+  cancel-in-progress: false
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yaml
+
+  release:
+    name: release
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: The tag is a version (a branch is a dry run)
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="$GITHUB_REF_NAME"
+            case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "::error::$tag is not a vX.Y.Z tag; run this workflow from a release tag"; exit 1;; esac
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            tag="dry-run"
+            echo "::notice::dry run from $GITHUB_REF_NAME: build, check and scan only; nothing is published"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+          mkdir -p dist
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550  # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # On a tag, `reuse` means the image is already out: check it, never push it again.
+      - name: Is this tag's image already published
+        id: published
+        shell: bash
+        env:
+          REF: ${{ env.IMAGE }}:${{ steps.version.outputs.tag }}
+          PUBLISH: ${{ steps.version.outputs.publish }}
+        run: |
+          set -euo pipefail
+          if out="$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest.Digest}}' 2>inspect.err)"; then
+            digest="$(printf '%s' "$out" | tr -d '"[:space:]')"
+            case "$digest" in
+              sha256:[0-9a-f]*) ;;
+              *) echo "::error::$REF: inspect succeeded but printed no digest: $out"; exit 1;;
+            esac
+            echo "::notice::$REF is already published ($digest)"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+            [ "$PUBLISH" = true ] && reuse=true || reuse=false
+          elif grep -qiE ': not found|name unknown|does not exist' inspect.err; then
+            echo "$REF is not published yet"
+            reuse=false
+          else
+            echo "::error::could not tell whether $REF is published:"; cat inspect.err; exit 1
+          fi
+          echo "reuse=$reuse" >> "$GITHUB_OUTPUT"
+          if [ "$reuse" = true ]; then subject="${REF%:*}@$digest"; else subject=candidate:release; fi
+          echo "subject=$subject" >> "$GITHUB_OUTPUT"
+
+      - name: Build the image for this machine
+        if: steps.published.outputs.reuse != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          load: true
+          pull: true
+          tags: candidate:release
+
+      - name: The image answers and carries its config
+        env:
+          SUBJECT: ${{ steps.published.outputs.subject }}
+        run: |
+          docker run --rm --entrypoint litellm "$SUBJECT" --version
+          docker run --rm --entrypoint sh "$SUBJECT" -c 'test -s /etc/litellm/config.yaml && grep -q "^model_list:" /etc/litellm/config.yaml'
+
+      # A published image is scanned and reported, never failed: nothing would be pushed,
+      # and a CVE found since the tag must not stop its release from being finished.
+      - name: No high or critical vulnerability that has a fix
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        with:
+          image: ${{ steps.published.outputs.subject }}
+          fail-build: ${{ steps.published.outputs.reuse != 'true' }}
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+
+      - name: SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
+        with:
+          image: ${{ steps.published.outputs.subject }}
+          format: spdx-json
+          output-file: dist/${{ github.event.repository.name }}-${{ steps.version.outputs.version }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Build and publish, both architectures
+        id: build
+        if: steps.version.outputs.publish == 'true' && steps.published.outputs.reuse != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          sbom: true
+          provenance: mode=max
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.version.outputs.tag }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.sha }}
+
+      - name: The GitHub release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+          DIGEST: ${{ steps.published.outputs.reuse == 'true' && steps.published.outputs.digest || steps.build.outputs.digest }}
+        run: |
+          line="Image: \`${IMAGE}@${DIGEST}\` (tags \`${TAG}\`, \`${SHA}\`; linux/amd64, linux/arm64)"
+          echo "$line" >> "$GITHUB_STEP_SUMMARY"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            awk -v v="$VERSION" '/^## \[/{on = index($0, "## [" v "]") == 1; next} on' CHANGELOG.md > notes.md
+            [ -s notes.md ] || echo "See CHANGELOG.md." > notes.md
+            gh release create "$TAG" --verify-tag --title "litellm-deploy $VERSION" --notes-file notes.md
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          gh release view "$TAG" --json body --jq .body > body.md
+          grep -qF "$DIGEST" body.md || { printf '\n\n%s\n' "$line" >> body.md; gh release edit "$TAG" --notes-file body.md; }

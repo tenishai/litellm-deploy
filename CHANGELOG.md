@@ -1,10 +1,19 @@
 # Changelog
 
 Notable changes to this deployment. The format loosely follows
-[Keep a Changelog](https://keepachangelog.com/). There are no tagged releases;
-the deployment is what `main` says.
+[Keep a Changelog](https://keepachangelog.com/). A `vX.Y.Z` tag publishes the
+image (`.github/workflows/release.yaml`); the dogfood deploys what `main` says.
 
 ## [Unreleased]
+
+### Added
+
+- **A release publishes the image.** Pushing a `vX.Y.Z` tag runs `ci.yaml` on the tagged
+  commit, builds the image, checks `litellm --version` and the baked config, scans it, and
+  publishes it for amd64 and arm64 to `ghcr.io/tenishai/litellm-deploy` under the tag and
+  the short sha, with SBOM and provenance, and a GitHub release carrying the digest. An
+  installer that deploys the stack from published images pulls this one instead of
+  building this repo (tenishai/stack, `image:`).
 
 ### Changed
 
