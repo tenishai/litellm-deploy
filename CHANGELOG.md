@@ -10,6 +10,12 @@ Nothing yet.
 
 ## [0.1.0] — 2026-11-28
 
+### Changed
+
+- **Upstream pinned to litellm v1.108.20** (from v1.103.2, pinned 2026-10-01). The release
+  dry run's vulnerability scan found 77 fixable high or critical findings in the older base,
+  none in this repo's own files; the current release scans clean. By digest, as before.
+
 ### Added
 
 - **A release publishes the image.** Pushing a `vX.Y.Z` tag runs `ci.yaml` on the tagged
